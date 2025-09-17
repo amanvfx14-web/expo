@@ -13,7 +13,6 @@ import {
   getStartMode,
   retryAsync,
   getMaestroFlowFilePath,
-  getCustomMaestroFlowsAsync,
   runCustomMaestroFlowsAsync,
 } from './lib/e2e-common';
 
@@ -44,20 +43,21 @@ const __dirname = dirname(__filename);
       await fs.cp(binaryPath, appBinaryPath, { recursive: true });
     }
     if (startMode === 'TEST' || startMode === 'BUILD_AND_TEST') {
-      await runCustomMaestroFlowsAsync(projectRoot, (maestroFlowFilePath) =>
-        testAsync(maestroFlowFilePath, deviceId, appBinaryPath)
+      const e2eDir = path.join(projectRoot, 'e2e');
+      await runCustomMaestroFlowsAsync(e2eDir, (maestroFlowFilePath) =>
+        testAsync(maestroFlowFilePath, deviceId, appBinaryPath, e2eDir)
       );
 
-      // const maestroFlowFilePath = getMaestroFlowFilePath(projectRoot);
-      // await createMaestroFlowAsync({
-      //   appId: APP_ID,
-      //   workflowFile: maestroFlowFilePath,
-      //   confirmFirstRunPrompt: true,
-      // });
-      //
+      const maestroFlowFilePath = getMaestroFlowFilePath(e2eDir);
+      await createMaestroFlowAsync({
+        appId: APP_ID,
+        workflowFile: maestroFlowFilePath,
+        confirmFirstRunPrompt: true,
+      });
+
       // await retryAsync((retryNumber) => {
       //   console.log(`Test suite attempt ${retryNumber + 1} of ${NUM_OF_RETRIES}`);
-      //   return testAsync(maestroFlowFilePath, deviceId, appBinaryPath);
+      //   return testAsync(maestroFlowFilePath, deviceId, appBinaryPath, e2eDir);
       // }, NUM_OF_RETRIES);
     }
   } catch (e) {
@@ -93,31 +93,40 @@ async function buildAsync(projectRoot: string, deviceId: string): Promise<string
   return binaryPath;
 }
 
+const runsOnCI = Boolean(process.env.CI);
+
 async function testAsync(
   maestroFlowFilePath: string,
   deviceId: string,
-  appBinaryPath: string
+  appBinaryPath: string,
+  maestroWorkspaceRoot: string
 ): Promise<void> {
   try {
-    console.log(`\n📱 Starting Device - name[${TARGET_DEVICE}] udid[${deviceId}]`);
-    await spawnAsync('xcrun', ['simctl', 'bootstatus', deviceId, '-b'], { stdio: 'inherit' });
-    await spawnAsync('open', ['-a', 'Simulator', '--args', '-CurrentDeviceUDID', deviceId], {
-      stdio: 'inherit',
-    });
+    if (runsOnCI) {
+      console.log(`\n📱 Starting Device - name[${TARGET_DEVICE}] udid[${deviceId}]`);
+      await spawnAsync('xcrun', ['simctl', 'bootstatus', deviceId, '-b'], { stdio: 'inherit' });
+      await spawnAsync('open', ['-a', 'Simulator', '--args', '-CurrentDeviceUDID', deviceId], {
+        stdio: 'inherit',
+      });
 
-    console.log(`\n🔌 Installing App - deviceId[${deviceId}] appBinaryPath[${appBinaryPath}]`);
-    await spawnAsync('xcrun', ['simctl', 'install', deviceId, appBinaryPath], { stdio: 'inherit' });
-
-    console.log(`\n📷 Starting Maestro tests - maestroFlowFilePath[${maestroFlowFilePath}]`);
+      console.log(`\n🔌 Installing App - deviceId[${deviceId}] appBinaryPath[${appBinaryPath}]`);
+      await spawnAsync('xcrun', ['simctl', 'install', deviceId, appBinaryPath], {
+        stdio: 'inherit',
+      });
+    }
+    console.log(
+      `\n📷 Starting Maestro tests - deviceId[${deviceId}] maestroFlowFilePath[${maestroFlowFilePath}]`
+    );
     await spawnAsync('maestro', ['--device', deviceId, 'test', maestroFlowFilePath], {
       stdio: 'inherit',
+      cwd: maestroWorkspaceRoot,
       env: {
         ...process.env,
         MAESTRO_DRIVER_STARTUP_TIMEOUT,
       },
     });
   } finally {
-    await spawnAsync('xcrun', ['simctl', 'shutdown', deviceId], { stdio: 'inherit' });
+    runsOnCI && (await spawnAsync('xcrun', ['simctl', 'shutdown', deviceId], { stdio: 'inherit' }));
   }
 }
 
